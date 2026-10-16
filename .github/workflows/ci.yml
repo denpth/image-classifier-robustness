@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  deep-learning-checks:
+    runs-on: ubuntu-latest
+    env:
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install verification dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install tensorflow numpy matplotlib scikit-learn opencv-python-headless tqdm
+
+      - name: Compile cleaner
+        run: python -m py_compile CIFAR_load_and_clean.py
+
+      - name: Validate notebooks
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          for notebook in (Path('D802.ipynb'), Path('final_analysis.ipynb')):
+              with notebook.open(encoding='utf-8') as handle:
+                  data = json.load(handle)
+              assert data.get('nbformat'), f'{notebook} is not a valid notebook'
+              assert isinstance(data.get('cells'), list), f'{notebook} has no cell list'
+              print(f'{notebook}: {len(data["cells"])} cells')
+          PY
+
+      - name: Exercise preprocessing pipeline with synthetic CIFAR-shaped data
+        run: |
+          python - <<'PY'
+          import tempfile
+          from pathlib import Path
+          import numpy as np
+          import CIFAR_load_and_clean as cleaner
+
+          x_train = np.zeros((100, 32, 32, 3), dtype=np.uint8)
+          y_train = np.repeat(np.arange(10), 10).reshape(-1, 1)
+          x_test = np.zeros((20, 32, 32, 3), dtype=np.uint8)
+          y_test = np.repeat(np.arange(10), 2).reshape(-1, 1)
+
+          x_train, y_train, x_test, y_test = cleaner.clean_cifar10(
+              x_train, y_train, x_test, y_test
+          )
+          x_train, y_train = cleaner.perform_quality_gate(x_train, y_train)
+          assert len(x_train) == 100
+
+          x_train, y_train, x_test, y_test = cleaner.normalize_cifar10(
+              x_train, y_train, x_test, y_test
+          )
+          x_train, y_train, x_test, y_test = cleaner.one_hot_encode_cifar10(
+              x_train, y_train, x_test, y_test
+          )
+          x_train, y_train, x_val, y_val, x_test, y_test = cleaner.split_cifar10(
+              x_train, y_train, x_test, y_test
+          )
+
+          assert x_train.shape == (80, 32, 32, 3)
+          assert x_val.shape == (20, 32, 32, 3)
+          assert y_train.shape == (80, 10)
+          assert y_val.shape == (20, 10)
+
+          with tempfile.TemporaryDirectory() as tmpdir:
+              cleaner.OUTPUT_FILE = str(Path(tmpdir) / 'cifar10_cleaned.npz')
+              cleaner.save_cifar10(x_train, y_train, x_test, y_test, x_val, y_val)
+              saved = np.load(cleaner.OUTPUT_FILE)
+              assert {'x_train', 'y_train', 'x_val', 'y_val', 'x_test', 'y_test'} <= set(saved.files)
+
+          print('Synthetic preprocessing smoke test passed.')
+          PY
+
+      - name: Load saved Keras models
+        run: |
+          python - <<'PY'
+          import tensorflow as tf
+
+          for model_path in ('final_baseline.keras', 'final_robust.keras'):
+              model = tf.keras.models.load_model(model_path, compile=False)
+              print(f'{model_path}: {model.count_params():,} parameters')
+          PY

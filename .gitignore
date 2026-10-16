@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Jupyter / editor state
+.ipynb_checkpoints/
+.jupyter/desktop-workspaces/
+.DS_Store
+*:Zone.Identifier
+
+# Generated CIFAR data
+cifar10_cleaned.npz
+cifar-10-python.tar.gz
+cifar-10-batches-py/
+
+# Local Keras / tuning caches
+.keras/
+
+# Local state and material excluded from portfolio publication
+private-course-materials/
+*.class
